@@ -123,10 +123,6 @@ The repository is structured as follows:
 4.  **Dataset Focus:**  The fine-tuning scripts `wand_test_eqbench.py` and `wand_test_gpqa.py` are set up to fine-tune on the respective datasets. If you want to change to your own dataset please change the code accordingly. 
 5. **LoRA Rank:** If you want to change the LoRA Rank or alpha, please modify the `lora_r` and `lora_alpha` variables in the fine-tuning scripts.
 
-## ⚖️ Licensing
-
-This project is licensed under the [MIT License](LICENSE).
-
 ## 🤝 Contributing
 
 Contributions are welcome! Please submit a pull request with your enhancements.
