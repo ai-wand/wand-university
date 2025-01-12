@@ -40,10 +40,10 @@ from lm_eval.models.huggingface import HFLM
 # LORA TRAINING SETUP - Initialize configuration for fine-tuning
 #-------------------------------------------------------------------------------------------
 model_id = "mistralai/Mistral-7B-Instruct-v0.3"
-output_dir = "./wand_university_lora_eq_bench-mistral-7b-lora-instruct-v0.3"
+output_dir = "./wand_university_lora_gsm8k-mistral-7b-lora-instruct-v0.3"
 num_train_epochs = 100000
 per_device_train_batch_size = 8
-learning_rate = 5e-8
+learning_rate = 1e-6
 max_seq_length = 4096
 lora_r = 8
 lora_alpha = 16
@@ -54,7 +54,7 @@ lora_dropout = 0.05
 #-------------------------------------------------------------------------------------------
 """
 lora_run = wandb.init(
-    project="wand-university-lora-gpqa",
+    project="wand-university-lora-gsm8k",
     name="arcane-knowledge-transfer-incremental",
     config={
         "epochs": num_train_epochs,
@@ -68,20 +68,24 @@ lora_run = wandb.init(
 #-------------------------------------------------------------------------------------------
 # DATA PREPARATION - Load and process training data
 #-------------------------------------------------------------------------------------------
-print(f"🔮 SUMMONING TRAINING DATA FROM THE EQ-BENCH DATASET... 📚 [Model: {model_id}]")
+print(f"🔮 SUMMONING TRAINING DATA FROM THE GSM8K DATASET... 📚 [Model: {model_id}]")
 from datasets import load_dataset
-ds = load_dataset("pbevan11/EQ-Bench")
-ds = ds.rename_columns({
-    'prompt': 'text',
-    'reference_answer_fullscale': 'target'
-})
+ds = load_dataset("gsm8k", "main")
+
+def format_example(example):
+    return {
+        'text': f"Question: {example['question']}\nAnswer:",
+        'target': example['answer']
+    }
+
+ds = ds.map(format_example)
 
 #-------------------------------------------------------------------------------------------
 # MODEL INITIALIZATION - Load base student model and configure tokenizer, for now mistral7b
 #-------------------------------------------------------------------------------------------
 print(f"⚡ INVOKING THE SACRED TOKENIZER AND MODEL... 🤖 [Sequence Length: {max_seq_length}]")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-base_model = AutoModelForCausalLM.from_pretrained(model_id, device_map='auto', attn_implementation="flash_attention_2", torch_dtype=torch.float16)
+base_model = AutoModelForCausalLM.from_pretrained(model_id, device_map='auto', attn_implementation="flash_attention_2", torch_dtype="auto", trust_remote_code=True)
 base_model.enable_input_require_grads()
 
 for param in base_model.parameters():
@@ -128,7 +132,7 @@ eval_model = HFLM(
     peft=peft_model,
     device="auto",
     dtype="auto",
-    batch_size=16,
+    batch_size=64,
     trust_remote_code=True,
     attn_implementation="flash_attention_2"
 )
@@ -136,21 +140,22 @@ eval_model = HFLM(
 def compute_metrics(eval_pred):
     results = evaluator.simple_evaluate(
         model=eval_model,
-        tasks=["eq_bench"],
+        tasks=["gsm8k"],
+        num_fewshot=5,
         log_samples=True
     )
+    #print(results)
     
-    eq_bench_score = results['results']['eq_bench']['eqbench,none']
-    percent_parseable = results['results']['eq_bench']['percent_parseable,none']
-    
+    # Extract all GSM8K related scores
+    gsm8k_results = results['results']['gsm8k']
     metrics = {
-        "eq_bench_score": eq_bench_score,
-        "percent_parseable": percent_parseable
+        "gsm8k_strict_match": gsm8k_results['exact_match,strict-match'],
+        "gsm8k_flexible_extract": gsm8k_results['exact_match,flexible-extract']
     }
-    
+
     print(f"Evaluation Metrics:")
-    print(f"EQ-Bench Score: {eq_bench_score:.2f}")
-    print(f"Percent Parseable: {percent_parseable:.2f}%")
+    print(f"GSM8K Strict Match Score: {metrics['gsm8k_strict_match']:.2f}")
+    print(f"GSM8K Flexible Extract Score: {metrics['gsm8k_flexible_extract']:.2f}")
     
     return metrics
 
@@ -163,9 +168,9 @@ args = TrainingArguments(
     per_device_train_batch_size=per_device_train_batch_size,
     learning_rate=learning_rate,
     report_to="wandb",
-    run_name="arcane-knowledge-transfer-eq-bench-lora-mistral-7b-instruct-v0.3",
+    run_name="arcane-knowledge-transfer-gsm8k-lora-mistral-7b-instruct-v0.3",
     overwrite_output_dir=True,
-    metric_for_best_model="eq_bench_score",
+    metric_for_best_model="eval_gsm8k_flexible_extract",
     greater_is_better=True,
     save_strategy="epoch",
     evaluation_strategy="epoch",
@@ -182,8 +187,8 @@ args = TrainingArguments(
 trainer = SFTTrainer(
     model=peft_model,
     args=args,
-    train_dataset=ds['validation'],
-    eval_dataset=ds['validation'],
+    train_dataset=ds['train'],
+    eval_dataset=ds['test'],
     compute_metrics=compute_metrics,
     peft_config=config
 )
